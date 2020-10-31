@@ -4,7 +4,8 @@ from random import sample, randint, random
 import numpy as np
 from vizdoom import DoomGame, Mode, ScreenFormat, ScreenResolution
 import torch
-from skimage.transform import resize
+#from skimage.transform import resize
+import cv2
 from collections import deque
 
 class ReplayBuffer(object):
@@ -45,7 +46,7 @@ def initialize_vizdoom(config):
     return game
 
 def preprocess(img, resolution):
-    return torch.from_numpy(resize(img, resolution).astype(np.float32))
+    return torch.from_numpy(cv2.resize(img, resolution).astype(np.float32))
 
 def stack_frames(stacked_frames, state, is_new_episode, resolution):
     frame = preprocess(state, resolution)

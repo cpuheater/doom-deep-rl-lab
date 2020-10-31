@@ -76,7 +76,7 @@ writer.add_text('hyperparameters', "|param|value|\n|-|-|\n%s" % (
     '\n'.join([f"|{key}|{value}|" for key, value in vars(args).items()])))
 
 device = torch.device('cuda' if torch.cuda.is_available() and args.cuda else 'cpu')
-
+print(device)
 
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
