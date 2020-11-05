@@ -95,7 +95,7 @@ class QNetwork(nn.Module):
     def __init__(self, actions, frames=4):
         super(QNetwork, self).__init__()
         self.network = nn.Sequential(
-            #Scale(1 / 255),
+            Scale(1 / 255),
             nn.Conv2d(frames, out_channels=8, kernel_size=6, stride=3),
             nn.ReLU(),
             nn.Conv2d(8, 8, kernel_size=3, stride=2),
