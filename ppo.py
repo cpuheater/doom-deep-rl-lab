@@ -10,31 +10,6 @@ import skimage.transform
 
 cv2.ocl.setUseOpenCL(False)
 
-def wrap_atari(env, max_episode_steps=None):
-    assert 'NoFrameskip' in env.spec.id
-    env = NoopResetEnv(env, noop_max=30)
-    env = MaxAndSkipEnv(env, skip=4)
-
-    assert max_episode_steps is None
-
-    return env
-
-def wrap_deepmind(env, episode_life=True, clip_rewards=True, frame_stack=False, scale=False):
-    """Configure environment for DeepMind-style Atari.
-    """
-    if episode_life:
-        env = EpisodicLifeEnv(env)
-    if 'FIRE' in env.unwrapped.get_action_meanings():
-        env = FireResetEnv(env)
-    env = WarpFrame(env)
-    if scale:
-        env = ScaledFloatFrame(env)
-    if clip_rewards:
-        env = ClipRewardEnv(env)
-    if frame_stack:
-        env = FrameStack(env, 4)
-    return env
-
 
 class ImageToPyTorch(gym.ObservationWrapper):
     """
@@ -83,7 +58,7 @@ if __name__ == "__main__":
                         help='the name of this experiment')
     parser.add_argument('--gym-id', type=str, default="basic",
                         help='the id of the gym environment')
-    parser.add_argument('--learning-rate', type=float, default=2.5e-4,
+    parser.add_argument('--learning-rate', type=float, default=4.5e-4,
                         help='the learning rate of the optimizer')
     parser.add_argument('--seed', type=int, default=1,
                         help='seed of the experiment')
@@ -101,6 +76,10 @@ if __name__ == "__main__":
                         help="the wandb's project name")
     parser.add_argument('--wandb-entity', type=str, default=None,
                         help="the entity (team) of wandb's project")
+    parser.add_argument('--scale-reward', type=float, default=0.01,
+                        help='scale reward')
+    parser.add_argument('--frame-skip', type=int, default=4,
+                        help='frame skip')
 
     # Algorithm specific arguments
     parser.add_argument('--n-minibatch', type=int, default=4,
@@ -265,7 +244,7 @@ torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = args.torch_deterministic
 def make_env(seed):
     def thunk():
-        env = ViZDoomEnv(seed, args.gym_id, render=True, reward_scale=1, frame_skip=4)
+        env = ViZDoomEnv(seed, args.gym_id, render=False, reward_scale=args.scale_reward, frame_skip=args.frame_skip)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
         return env
@@ -315,11 +294,13 @@ class Agent(nn.Module):
         return self.network(x)
 
     def get_action(self, x, action=None):
-        logits = self.actor(self.forward(x))
+        x = self.forward(x)
+        value = self.critic(x)
+        logits = self.actor(x)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy()
+        return value, action, probs.log_prob(action), probs.entropy()
 
     def get_value(self, x):
         return self.critic(self.forward(x))
@@ -360,9 +341,9 @@ for update in range(1, num_updates+1):
 
         # ALGO LOGIC: put action logic here
         with torch.no_grad():
-            values[step] = agent.get_value(obs[step]).flatten()
-            action, logproba, _ = agent.get_action(obs[step])
+            value, action, logproba, _ = agent.get_action(obs[step])
 
+        values[step] = value.flatten()
         actions[step] = action
         logprobs[step] = logproba
 
@@ -430,7 +411,7 @@ for update in range(1, num_updates+1):
             if args.norm_adv:
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-            _, newlogproba, entropy = agent.get_action(b_obs[minibatch_ind], b_actions.long()[minibatch_ind])
+            _, _, newlogproba, entropy = agent.get_action(b_obs[minibatch_ind], b_actions.long()[minibatch_ind])
             ratio = (newlogproba - b_logprobs[minibatch_ind]).exp()
 
             # Stats
