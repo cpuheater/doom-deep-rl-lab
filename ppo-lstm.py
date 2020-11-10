@@ -261,19 +261,48 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 def recurrent_generator(obs, logprobs, actions, advantages, returns, values, rnn_hidden_states, masks):
-        perm = torch.randperm(args.num_envs)
-        for start_ind in range(0, args.num_envs):
-            ind = perm[start_ind]
-            T, N = args.num_steps, 1
+        def _flatten_helper(T, N, _tensor):
+            return _tensor.view(T * N, *_tensor.size()[2:])
 
-            b_rnn_hidden_states = rnn_hidden_states[0:1, ind].view(N, -1)
-            b_obs = obs[:, ind]
-            b_actions = actions[:, ind]
-            b_values = values[:, ind]
-            b_return = returns[:, ind]
-            b_masks = masks[:, ind]
-            b_logprobs = logprobs[:, ind]
-            b_advantages = advantages[:, ind]
+        assert args.num_envs >= args.n_minibatch, (
+        "PPO requires the number of envs ({}) "
+        "to be greater than or equal to the number of "
+        "PPO mini batches ({}).".format(args.num_envs, args.n_minibatch))
+        num_envs_per_batch = args.num_envs // args.n_minibatch
+        perm = torch.randperm(args.num_envs)
+        for start_ind in range(0, args.num_envs, num_envs_per_batch):
+
+            a_rnn_hidden_states = []
+            a_obs = []
+            a_actions = []
+            a_values = []
+            a_returns = []
+            a_masks = []
+            a_logprobs = []
+            a_advantages = []
+
+            for offset in range(num_envs_per_batch):
+                ind = perm[start_ind + offset]
+                a_rnn_hidden_states.append(rnn_hidden_states[0:1, ind])
+                a_obs.append(obs[:, ind])
+                a_actions.append(actions[:, ind])
+                a_values.append(values[:, ind])
+                a_returns.append(returns[:, ind])
+                a_masks.append(masks[:, ind])
+                a_logprobs.append(logprobs[:, ind])
+                a_advantages.append(advantages[:, ind])
+
+
+            T, N = args.num_steps, num_envs_per_batch
+
+            b_rnn_hidden_states = torch.stack(a_rnn_hidden_states, 1).view(N, -1)
+            b_obs = _flatten_helper(T, N, torch.stack(a_obs, 1))
+            b_actions = _flatten_helper(T, N, torch.stack(a_actions, 1))
+            b_values = _flatten_helper(T, N, torch.stack(a_values, 1))
+            b_return = _flatten_helper(T, N, torch.stack(a_returns, 1))
+            b_masks = _flatten_helper(T, N, torch.stack(a_masks, 1))
+            b_logprobs = _flatten_helper(T, N, torch.stack(a_logprobs, 1))
+            b_advantages = _flatten_helper(T, N, torch.stack(a_advantages, 1))
 
             yield b_obs, b_rnn_hidden_states, b_actions, \
                 b_values, b_return, b_masks, b_logprobs, b_advantages
