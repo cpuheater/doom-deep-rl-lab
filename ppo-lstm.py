@@ -79,6 +79,8 @@ if __name__ == "__main__":
                         help='scale reward')
     parser.add_argument('--frame-skip', type=int, default=4,
                         help='frame skip')
+    parser.add_argument('--rnn-hidden-size', type=int, default=256,
+                        help='rnn hidden size')
 
     # Algorithm specific arguments
     parser.add_argument('--n-minibatch', type=int, default=4,
@@ -117,8 +119,8 @@ if __name__ == "__main__":
                           help='Toggles wheter or not to use a clipped loss for the value function, as per the paper.')
 
     args = parser.parse_args()
-    #if not args.seed:
-    args.seed = int(time.time())
+    if not args.seed:
+        args.seed = int(time.time())
 
 args.batch_size = int(args.num_envs * args.num_steps)
 args.minibatch_size = int(args.batch_size // args.n_minibatch)
@@ -147,7 +149,6 @@ class ViZDoomEnv:
         self.frame_skip = frame_skip
 
         game.set_seed(seed)
-        random.seed(seed)
         game.set_window_visible(render)
         game.init()
 
@@ -155,34 +156,21 @@ class ViZDoomEnv:
 
     def get_current_input(self):
         state = self.game.get_state()
-
         res_source = []
         res_source.append(state.screen_buffer)
-
         res = np.vstack(res_source)
         res = skimage.transform.resize(res, self.observation_space.shape, preserve_range=True)
         self.last_input = res
         return res
 
-    def step_with_skip(self, action):
-        reward_acc = 0
-        ob = self.last_input
-
-        for i in range(self.frame_skip + 1):
-            reward = self.game.make_action(self.actions[action])
-            reward_acc += reward
-            done = self.game.is_episode_finished()
-
-            if done:
-                break
-            else:
-                ob = self.get_current_input()
-
-        return ob, reward_acc, done
-
     def step(self, action):
         info = {}
-        ob, reward, done = self.step_with_skip(action)
+        reward = self.game.make_action(self.actions[action], self.frame_skip)
+        done = self.game.is_episode_finished()
+        if done:
+            ob = self.last_input
+        else:
+            ob = self.get_current_input()
         # reward scaling
         reward = reward * self.reward_scale
         self.total_reward += reward
@@ -279,7 +267,6 @@ def recurrent_generator(obs, logprobs, actions, advantages, returns, values, rnn
             T, N = args.num_steps, 1
 
             b_rnn_hidden_states = rnn_hidden_states[0:1, ind].view(N, -1)
-            dupa = obs[:, ind]
             b_obs = obs[:, ind]
             b_actions = actions[:, ind]
             b_values = values[:, ind]
@@ -305,7 +292,7 @@ class Agent(nn.Module):
             layer_init(nn.Conv2d(64, 64, 3, stride=1)),
             nn.ReLU(),
             nn.Flatten(),
-            layer_init(nn.Linear(3136, 512)),
+            layer_init(nn.Linear(3136, rnn_hidden_size)),
             nn.ReLU()
         )
 
@@ -321,30 +308,18 @@ class Agent(nn.Module):
     def forward(self, x, rnn_hidden_state, mask):
         x = self.network(x)
         if x.size(0) == rnn_hidden_state.size(0):
-            dupa = rnn_hidden_state * mask
             x = rnn_hidden_state = self.gru(x, rnn_hidden_state * mask)
         else:
-            # x is a (T, N, -1) tensor that has been flatten to (T * N, -1)
             N = rnn_hidden_state.size(0)
             T = int(x.size(0) / N)
-
-            # unflatten
             x = x.view(T, N, x.size(1))
-
-            # Same deal with masks
             mask = mask.view(T, N, 1)
-
             outputs = []
             for i in range(T):
                 rnn_hidden_state = self.gru(x[i], rnn_hidden_state * mask[i])
                 outputs.append(rnn_hidden_state)
-
-            # assert len(outputs) == T
-            # x is a (T, N, -1) tensor
             x = torch.stack(outputs, dim=0)
-            # flatten
             x = x.view(T * N, -1)
-
         return x, rnn_hidden_state
 
     def get_action(self, x, rnn_hidden_state, mask, action=None):
@@ -360,14 +335,14 @@ class Agent(nn.Module):
         x, rnn_hidden_state = self.forward(x, rnn_hidden_state, mask)
         return self.critic(x)
 
-agent = Agent(envs).to(device)
+agent = Agent(envs, rnn_hidden_size=args.rnn_hidden_size, rnn_input_size=args.rnn_hidden_size).to(device)
 optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 if args.anneal_lr:
     # https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/defaults.py#L20
     lr = lambda f: f * args.learning_rate
 
 
-rnn_hidden_size = 512
+rnn_hidden_size = args.rnn_hidden_size
 
 # ALGO Logic: Storage for epoch data
 obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_space.shape).to(device)
@@ -410,18 +385,12 @@ for update in range(1, num_updates+1):
         actions[step] = action
         logprobs[step] = logproba
         values[step] = value.flatten()
-        print(rnn_hidden_state)
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rs, ds, infos = envs.step(action)
         rewards[step], next_done = rs.view(-1), torch.Tensor(ds).to(device)
         mask = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in next_done]).to(device)
 
-        #for info in infos:
-        #    if 'episode' in info.keys():
-        #        print(f"global_step={global_step}, episode_reward={info['episode']['r']}")
-        #        writer.add_scalar("charts/episode_reward", info['episode']['r'], global_step)
-        #        break
         for info in infos:
             if 'Episode_Total_Reward' in info.keys():
                 writer.add_scalar("charts/episode_reward", info['Episode_Total_Reward'], global_step)
@@ -458,7 +427,7 @@ for update in range(1, num_updates+1):
 
 
     # Optimizaing the policy and value network
-    target_agent = Agent(envs).to(device)
+    target_agent = Agent(envs, rnn_hidden_size=args.rnn_hidden_size, rnn_input_size=args.rnn_hidden_size).to(device)
     for i_epoch_pi in range(args.update_epochs):
         target_agent.load_state_dict(agent.state_dict())
         data_generator = recurrent_generator(obs, logprobs, actions, advantages, returns, values,
