@@ -57,7 +57,7 @@ if __name__ == "__main__":
                         help='the name of this experiment')
     parser.add_argument('--gym-id', type=str, default="basic",
                         help='the id of the gym environment')
-    parser.add_argument('--learning-rate', type=float, default=6e-4,
+    parser.add_argument('--learning-rate', type=float, default=3e-4,
                         help='the learning rate of the optimizer')
     parser.add_argument('--seed', type=int, default=1,
                         help='seed of the experiment')
@@ -83,7 +83,7 @@ if __name__ == "__main__":
                         help='rnn hidden size')
 
     # Algorithm specific arguments
-    parser.add_argument('--n-minibatch', type=int, default=4,
+    parser.add_argument('--n-minibatch', type=int, default=8,
                         help='the number of mini batch')
     parser.add_argument('--num-envs', type=int, default=16,
                         help='the number of parallel game environment')
