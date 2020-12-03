@@ -67,8 +67,8 @@ if __name__ == "__main__":
     parser.add_argument('--train-frequency', type=int, default=4,
                         help="the frequency of training")
     args = parser.parse_args()
-    if not args.seed:
-        args.seed = int(time.time())
+    #if not args.seed:
+    args.seed = int(time.time())
 
 experiment_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
 writer = SummaryWriter(f"runs/{experiment_name}")
@@ -145,7 +145,7 @@ for global_step in range(args.total_timesteps):
         logits = q_network.forward(obs.reshape((1,) + obs.shape))
         action = torch.argmax(logits, dim=1).tolist()[0]
     reward = game.make_action(actions[action], frame_repeat)
-    reward *= 0.1
+    reward *= 0.01
     done = game.is_episode_finished()
 
     next_obs, stacked_frames = stack_frames(stacked_frames, np.zeros(resolution), True, resolution) if done else stack_frames(stacked_frames, game.get_state().screen_buffer, False, resolution)

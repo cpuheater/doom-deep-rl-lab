@@ -502,6 +502,10 @@ for update in range(1, num_updates+1):
     writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
     writer.add_scalar("losses/entropy", entropy.mean().item(), global_step)
     writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+    writer.add_histogram("actor/weights", agent.actor.weight)
+    writer.add_histogram("rnn_hidden_state/hh", agent.gru.weight_hh)
+    writer.add_histogram("rnn_hidden_state/ih", agent.gru.weight_ih)
+    writer.add_histogram("rnn_hidden_state/grad", agent.gru.weight_hh.grad)
     if args.kle_stop or args.kle_rollback:
         writer.add_scalar("debug/pg_stop_iter", i_epoch_pi, global_step)
 

@@ -460,8 +460,7 @@ def act(args, resolution, action_space, i, q_network, target_network, lock, roll
     # TRY NOT TO MODIFY: start the game
     game.new_episode()
     obs = game.get_state().screen_buffer
-    stacked_frames = deque([np.zeros(resolution, dtype=np.int) for i in range(4)], maxlen=4)
-    obs, stacked_frames = stack_frames(stacked_frames, obs, True, resolution)
+    obs, stacked_frames = stack_frames(None, obs, True, resolution)
     storage = []
     episode_reward = 0
     update_step = 0
@@ -481,9 +480,9 @@ def act(args, resolution, action_space, i, q_network, target_network, lock, roll
 
         # TRY NOT TO MODIFY: execute the game and log data.
         reward = game.make_action(action_space[action], 12)
-        reward *= 0.1
+        reward *= 0.01
         done = game.is_episode_finished()
-        next_obs, stacked_frames = stack_frames(stacked_frames, np.zeros(resolution), True,
+        next_obs, stacked_frames = stack_frames(None, np.zeros(resolution), True,
                                                 resolution) if done else stack_frames(stacked_frames,
                                                                                       game.get_state().screen_buffer,
                                                                                       False, resolution)
@@ -597,7 +596,7 @@ if __name__ == "__main__":
                         help='the name of this experiment')
     parser.add_argument('--gym-id', type=str, default="basic",
                         help='the id of the gym environment')
-    parser.add_argument('--learning-rate', type=float, default=1e-4,
+    parser.add_argument('--learning-rate', type=float, default=0.0006,
                         help='the learning rate of the optimizer')
     parser.add_argument('--seed', type=int, default=2,
                         help='seed of the experiment')
@@ -645,7 +644,7 @@ if __name__ == "__main__":
                         help="the ending epsilon for exploration")
     parser.add_argument('--exploration-fraction', type=float, default=0.10,
                         help="the fraction of `total-timesteps` it takes from start-e to go end-e")
-    parser.add_argument('--learning-starts', type=int, default=80000,
+    parser.add_argument('--learning-starts', type=int, default=800,
                         help="timestep to start learning")
     parser.add_argument('--train-frequency', type=int, default=4,
                         help="the frequency of training")

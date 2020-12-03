@@ -67,8 +67,8 @@ if __name__ == "__main__":
     parser.add_argument('--train-frequency', type=int, default=4,
                         help="the frequency of training")
     args = parser.parse_args()
-    if not args.seed:
-        args.seed = int(time.time())
+    #if not args.seed:
+    args.seed = int(time.time())
 
 experiment_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
 writer = SummaryWriter(f"runs/{experiment_name}")
