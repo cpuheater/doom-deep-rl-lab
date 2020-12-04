@@ -86,7 +86,7 @@ if __name__ == "__main__":
                         help='the number of mini batch')
     parser.add_argument('--num-envs', type=int, default=8,
                         help='the number of parallel game environment')
-    parser.add_argument('--num-steps', type=int, default=128,
+    parser.add_argument('--num-steps', type=int, default=5,
                         help='the number of steps per game environment')
     parser.add_argument('--gamma', type=float, default=0.99,
                         help='the discount factor gamma')
@@ -108,7 +108,7 @@ if __name__ == "__main__":
                          help='If toggled, the policy updates will roll back to previous policy if KL exceeds target-kl')
     parser.add_argument('--target-kl', type=float, default=0.03,
                          help='the target-kl variable that is referred by --kl')
-    parser.add_argument('--gae', type=lambda x:bool(strtobool(x)), default=False, nargs='?', const=True,
+    parser.add_argument('--gae', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True,
                          help='Use GAE for advantage computation')
     parser.add_argument('--norm-adv', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True,
                           help="Toggles advantages normalization")
@@ -372,10 +372,10 @@ for update in range(1, num_updates+1):
     b_actions = actions.reshape((-1,)+envs.action_space.shape)
     b_returns = returns.reshape(-1)
 
-    b_values, b_actions, b_logprobs, b_entropy = agent.get_action(b_obs, b_actions.long())
-    advantages = b_returns - b_values.reshape(-1)
+    _, _, b_logprobs, b_entropy = agent.get_action(b_obs, b_actions.long())
     v_loss = advantages.pow(2).mean()
-    pg_loss = -(advantages.detach() * b_logprobs).mean()
+    dupa = advantages.reshape(-1)
+    pg_loss = -(advantages.reshape(-1).detach() * b_logprobs).mean()
     entropy_loss = b_entropy.mean()
     loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
