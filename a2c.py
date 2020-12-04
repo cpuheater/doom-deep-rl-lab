@@ -372,10 +372,10 @@ for update in range(1, num_updates+1):
     b_actions = actions.reshape((-1,)+envs.action_space.shape)
     b_returns = returns.reshape(-1)
 
-    _, _, b_logprobs, b_entropy = agent.get_action(b_obs, b_actions.long())
+    b_values, b_actions, b_logprobs, b_entropy = agent.get_action(b_obs, b_actions.long())
+    advantages = b_returns - b_values.reshape(-1)
     v_loss = advantages.pow(2).mean()
-    dupa = advantages.reshape(-1)
-    pg_loss = -(advantages.reshape(-1).detach() * b_logprobs).mean()
+    pg_loss = -(advantages.detach() * b_logprobs).mean()
     entropy_loss = b_entropy.mean()
     loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
