@@ -32,6 +32,7 @@ class ImageToPyTorch(gym.ObservationWrapper):
 def wrap_pytorch(env):
     return ImageToPyTorch(env)
 
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -78,6 +79,7 @@ if __name__ == "__main__":
                         help='scale reward')
     parser.add_argument('--frame-skip', type=int, default=4,
                         help='frame skip')
+    parser.add_argument('--noisy-network', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True)
 
     # Algorithm specific arguments
     parser.add_argument('--num-envs', type=int, default=8,
@@ -88,7 +90,7 @@ if __name__ == "__main__":
                         help='the discount factor gamma')
     parser.add_argument('--gae-lambda', type=float, default=0.95,
                         help='the lambda for the general advantage estimation')
-    parser.add_argument('--ent-coef', type=float, default=0.01,
+    parser.add_argument('--ent-coef', type=float, default=0,
                         help="coefficient of the entropy")
     parser.add_argument('--vf-coef', type=float, default=0.5,
                         help="coefficient of the value function")
@@ -106,6 +108,63 @@ if __name__ == "__main__":
     args.seed = int(time.time())
 
 args.batch_size = int(args.num_envs * args.num_steps)
+
+class NoisyLinear(nn.Module):
+    def __init__(self, in_features, out_features, std_init=0.4):
+        super(NoisyLinear, self).__init__()
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.std_init = std_init
+
+        self.weight_mu = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        self.weight_sigma = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        self.register_buffer('weight_epsilon', torch.FloatTensor(out_features, in_features))
+
+        self.bias_mu = nn.Parameter(torch.FloatTensor(out_features))
+        self.bias_sigma = nn.Parameter(torch.FloatTensor(out_features))
+        self.register_buffer('bias_epsilon', torch.FloatTensor(out_features))
+
+        self.reset_parameters()
+        self.reset_noise()
+
+    def forward(self, x):
+        if self.training:
+            weight = self.weight_mu + self.weight_sigma.mul(self.weight_epsilon)
+            bias = self.bias_mu + self.bias_sigma.mul(self.bias_epsilon)
+        else:
+            weight = self.weight_mu
+            bias = self.bias_mu
+
+        return F.linear(x, weight, bias)
+
+    def reset_parameters(self):
+        mu_range = 1 / math.sqrt(self.weight_mu.size(1))
+
+        self.weight_mu.data.uniform_(-mu_range, mu_range)
+        self.weight_sigma.data.fill_(self.std_init / math.sqrt(self.weight_sigma.size(1)))
+
+        self.bias_mu.data.uniform_(-mu_range, mu_range)
+        self.bias_sigma.data.fill_(self.std_init / math.sqrt(self.bias_sigma.size(0)))
+
+    def reset_noise(self):
+        epsilon_in = self._scale_noise(self.in_features)
+        epsilon_out = self._scale_noise(self.out_features)
+
+        self.weight_epsilon.copy_(epsilon_out.ger(epsilon_in))
+        self.bias_epsilon.copy_(self._scale_noise(self.out_features))
+
+    def _scale_noise(self, size):
+        x = torch.randn(size)
+        x = x.sign().mul(x.abs().sqrt())
+        return x
+
+
+def create_linear(in_features, out_features, noisy=False, std=0.5):
+    if noisy:
+        return NoisyLinear(in_features, out_features, std_init=std)
+    else:
+        return nn.Linear(in_features, out_features)
 
 
 class ViZDoomEnv:
@@ -255,8 +314,9 @@ class Agent(nn.Module):
             layer_init(nn.Linear(2560, 512)),
             nn.ReLU()
         )
-        self.actor = layer_init(nn.Linear(512, envs.action_space.n), std=0.01)
-        self.critic = layer_init(nn.Linear(512, 1), std=1)
+        self.actor = NoisyLinear(512, envs.action_space.n, std_init=0.01)
+        self.critic = NoisyLinear(512, 1, std_init=0.1)
+        nn.init.orthogonal_(self.actor.weight_mu, gain=0.01)
 
     def forward(self, x):
         return self.network(x)
@@ -273,7 +333,13 @@ class Agent(nn.Module):
     def get_value(self, x):
         return self.critic(self.forward(x))
 
+    def reset_noise(self):
+        self.critic.reset_noise()
+        self.actor.reset_noise()
+
+
 agent = Agent(envs).to(device)
+agent.train()
 optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 if args.anneal_lr:
     # https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/defaults.py#L20
@@ -367,6 +433,8 @@ for update in range(1, num_updates+1):
     nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
     optimizer.step()
 
+    if args.noisy_network:
+        agent.reset_noise()
 
     # TRY NOT TO MODIFY: record rewards for plotting purposes
     writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]['lr'], global_step)
