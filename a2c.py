@@ -274,7 +274,8 @@ class Agent(nn.Module):
         return self.critic(self.forward(x))
 
 agent = Agent(envs).to(device)
-optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+optimizer = optim.RMSprop(agent.parameters(), lr=args.learning_rate)
+
 if args.anneal_lr:
     # https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/defaults.py#L20
     lr = lambda f: f * args.learning_rate
