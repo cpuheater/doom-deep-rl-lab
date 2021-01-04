@@ -397,6 +397,9 @@ def recurrent_generator(episode_done_indices, obs, actions, logprobs, values, ad
         start = end
         yield mini_batch
 
+def masked_mean(tensor: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    return (tensor.T * mask).sum() / torch.clamp((torch.ones_like(tensor.T) * mask).float().sum(), min=1.0)
+
 def init_recurrent_cell_states(num_sequences):
         hxs = torch.zeros((num_sequences), args.rnn_hidden_size, dtype=torch.float32, device=device, requires_grad=True).unsqueeze(0).to(device)
         cxs = torch.zeros((num_sequences), args.rnn_hidden_size, dtype=torch.float32, device=device, requires_grad=True).unsqueeze(0).to(device)
@@ -557,6 +560,9 @@ for update in range(1, num_updates+1):
             else:
                 v_loss = 0.5 * ((new_values - b_returns) ** 2).mean()
 
+            pg_loss = masked_mean(pg_loss, batch["loss_mask"])
+            v_loss = masked_mean(v_loss, batch["loss_mask"])
+            entropy_loss = masked_mean(entropy_loss, batch["loss_mask"])
             loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
             optimizer.zero_grad()
