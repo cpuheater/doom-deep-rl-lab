@@ -442,7 +442,6 @@ logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
 rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
 dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
 values = torch.zeros((args.num_steps, args.num_envs)).to(device)
-masks = torch.ones((args.num_steps, args.num_envs, 1)).to(device)
 
 # TRY NOT TO MODIFY: start the game
 global_step = 0
@@ -466,7 +465,6 @@ for update in range(1, num_updates+1):
         global_step += 1 * args.num_envs
         obs[step] = next_obs
         dones[step] = next_done
-        masks[step] = mask
         # ALGO LOGIC: put action logic here
         with torch.no_grad():
             value, (rnn_hidden_state, rnn_cell_state), action, logproba, _ = agent.get_action(obs[step], rnn_hidden_state, rnn_cell_state)
