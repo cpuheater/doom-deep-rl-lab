@@ -10,27 +10,6 @@ import skimage.transform
 
 cv2.ocl.setUseOpenCL(False)
 
-class ImageToPyTorch(gym.ObservationWrapper):
-    """
-    Image shape to channels x weight x height
-    """
-
-    def __init__(self, env):
-        super(ImageToPyTorch, self).__init__(env)
-        old_shape = self.observation_space.shape
-        self.observation_space = gym.spaces.Box(
-            low=0,
-            high=255,
-            shape=(old_shape[-1], old_shape[0], old_shape[1]),
-            dtype=np.uint8,
-        )
-
-    def observation(self, observation):
-        return np.transpose(observation, axes=(2, 0, 1))
-
-def wrap_pytorch(env):
-    return ImageToPyTorch(env)
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -57,7 +36,7 @@ if __name__ == "__main__":
                         help='the name of this experiment')
     parser.add_argument('--gym-id', type=str, default="basic",
                         help='the id of the gym environment')
-    parser.add_argument('--learning-rate', type=float, default=6e-4,
+    parser.add_argument('--learning-rate', type=float, default=5e-4,
                         help='the learning rate of the optimizer')
     parser.add_argument('--seed', type=int, default=1,
                         help='seed of the experiment')
@@ -89,7 +68,7 @@ if __name__ == "__main__":
                         help='the number of mini batch')
     parser.add_argument('--num-envs', type=int, default=8,
                         help='the number of parallel game environment')
-    parser.add_argument('--num-steps', type=int, default=8,
+    parser.add_argument('--num-steps', type=int, default=128,
                         help='the number of steps per game environment')
     parser.add_argument('--gamma', type=float, default=0.99,
                         help='the discount factor gamma')
@@ -101,7 +80,7 @@ if __name__ == "__main__":
                         help="coefficient of the value function")
     parser.add_argument('--max-grad-norm', type=float, default=0.5,
                         help='the maximum norm for the gradient clipping')
-    parser.add_argument('--clip-coef', type=float, default=0.1,
+    parser.add_argument('--clip-coef', type=float, default=0.2,
                         help="the surrogate clipping coefficient")
     parser.add_argument('--update-epochs', type=int, default=4,
                          help="the K epochs to update the policy")
@@ -111,7 +90,7 @@ if __name__ == "__main__":
                          help='If toggled, the policy updates will roll back to previous policy if KL exceeds target-kl')
     parser.add_argument('--target-kl', type=float, default=0.03,
                          help='the target-kl variable that is referred by --kl')
-    parser.add_argument('--gae', type=lambda x:bool(strtobool(x)), default=False, nargs='?', const=True,
+    parser.add_argument('--gae', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True,
                          help='Use GAE for advantage computation')
     parser.add_argument('--norm-adv', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True,
                           help="Toggles advantages normalization")
@@ -284,7 +263,7 @@ class Agent(nn.Module):
             elif 'weight' in name:
                 nn.init.orthogonal_(param, np.sqrt(2))
 
-        self.actor = layer_init(nn.Linear(rnn_hidden_size, envs.action_space.n), std=0.01)
+        self.actor = layer_init(nn.Linear(rnn_hidden_size, envs.action_space.n), std=np.sqrt(0.01))
         self.critic = layer_init(nn.Linear(rnn_hidden_size, 1), std=1)
 
     def forward(self, x, rnn_hidden_state, rnn_cell_state, sequence_length = 1):
@@ -316,12 +295,12 @@ def recurrent_generator(episode_done_indices, obs, actions, logprobs, values, ad
 
     # Supply training samples
     samples = {
-        'vis_obs': obs,
-        'actions': actions,
-        'values': values,
-        'log_probs': logprobs,
-        'advantages': advantages,
-        'returns': returns,
+        'vis_obs': obs.permute(1, 0, 2, 3, 4),
+        'actions': actions.permute(1, 0),
+        'values': values.permute(1, 0),
+        'log_probs': logprobs.permute(1, 0),
+        'advantages': advantages.permute(1, 0),
+        'returns': returns.permute(1, 0),
         # The loss mask is used for masking the padding while computing the loss function.
         # This is only of significance while using recurrence.
         'loss_mask': np.ones((args.num_envs, args.num_steps), dtype=np.float32)
@@ -525,10 +504,7 @@ for update in range(1, num_updates+1):
         tmp.append(e[1])
         dones_index[e[0]] = tmp
 
-    # Optimizaing the policy and value network
-    target_agent = Agent(envs, rnn_hidden_size=args.rnn_hidden_size, rnn_input_size=args.rnn_hidden_size).to(device)
     for i_epoch_pi in range(args.update_epochs):
-        target_agent.load_state_dict(agent.state_dict())
         data_generator = recurrent_generator(dones_index, obs, actions, logprobs, values, advantages, returns)
         for batch in data_generator:
             b_obs, b_actions, b_values, b_returns, b_logprobs, b_advantages = batch['vis_obs'], batch['actions'], batch['values'], batch['returns'], batch['log_probs'], batch['advantages']
