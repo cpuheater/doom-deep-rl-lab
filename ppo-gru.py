@@ -119,8 +119,8 @@ if __name__ == "__main__":
                           help='Toggles wheter or not to use a clipped loss for the value function, as per the paper.')
 
     args = parser.parse_args()
-    if not args.seed:
-        args.seed = int(time.time())
+    #if not args.seed:
+    args.seed = int(time.time())
 
 args.batch_size = int(args.num_envs * args.num_steps)
 args.minibatch_size = int(args.batch_size // args.n_minibatch)
@@ -260,6 +260,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     return layer
 
 
+
 def recurrent_generator(obs, logprobs, actions, advantages, returns, values, rnn_hidden_states, masks):
         def _flatten_helper(T, N, _tensor):
             return _tensor.view(T * N, *_tensor.size()[2:])
@@ -325,31 +326,55 @@ class Agent(nn.Module):
             nn.ReLU()
         )
 
-        self.gru = nn.GRUCell(rnn_input_size, rnn_hidden_size)
-        nn.init.orthogonal_(self.gru.weight_ih.data)
-        nn.init.orthogonal_(self.gru.weight_hh.data)
-        self.gru.bias_ih.data.fill_(0)
-        self.gru.bias_hh.data.fill_(0)
+        self.gru = nn.GRU(rnn_input_size, rnn_hidden_size)
+        for name, param in self.gru.named_parameters():
+            if 'bias' in name:
+                nn.init.constant_(param, 0)
+            elif 'weight' in name:
+                nn.init.orthogonal_(param, np.sqrt(2))
 
         self.actor = layer_init(nn.Linear(rnn_hidden_size, envs.action_space.n), std=0.01)
         self.critic = layer_init(nn.Linear(rnn_hidden_size, 1), std=1)
 
-    def forward(self, x, rnn_hidden_state, mask):
+    def forward(self, x, hxs, mask):
         x = self.network(x)
-        if x.size(0) == rnn_hidden_state.size(0):
-            x = rnn_hidden_state = self.gru(x, rnn_hidden_state * mask)
+        if x.size(0) == hxs.size(0):
+            x, hxs = self.gru(x.unsqueeze(0), (hxs * mask).unsqueeze(0))
+            x = x.squeeze()
+            hxs = hxs.squeeze(0)
         else:
-            N = rnn_hidden_state.size(0)
+            N = hxs.size(0)
             T = int(x.size(0) / N)
             x = x.view(T, N, x.size(1))
-            mask = mask.view(T, N, 1)
+            masks = mask.view(T, N)
+            has_zeros = ((masks[1:] == 0.0) \
+                         .any(dim=-1)
+                         .nonzero()
+                         .squeeze()
+                         .cpu())
+
+            if has_zeros.dim() == 0:
+                has_zeros = [has_zeros.item() + 1]
+            else:
+                has_zeros = (has_zeros + 1).numpy().tolist()
+
+            has_zeros = [0] + has_zeros + [T]
+            hxs = hxs.unsqueeze(0)
             outputs = []
-            for i in range(T):
-                rnn_hidden_state = self.gru(x[i], rnn_hidden_state * mask[i])
-                outputs.append(rnn_hidden_state)
-            x = torch.stack(outputs, dim=0)
+            for i in range(len(has_zeros) - 1):
+                start_idx = has_zeros[i]
+                end_idx = has_zeros[i + 1]
+
+                rnn_scores, hxs = self.gru(
+                    x[start_idx:end_idx],
+                    hxs * masks[start_idx].view(1, -1, 1))
+
+                outputs.append(rnn_scores)
+
+            x = torch.cat(outputs, dim=0)
             x = x.view(T * N, -1)
-        return x, rnn_hidden_state
+            hxs = hxs.squeeze(0)
+        return x, hxs
 
     def get_action(self, x, rnn_hidden_state, mask, action=None):
         x, rnn_hidden_state = self.forward(x, rnn_hidden_state, mask)
@@ -503,9 +528,6 @@ for update in range(1, num_updates+1):
     writer.add_scalar("losses/entropy", entropy.mean().item(), global_step)
     writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
     writer.add_histogram("actor/weights", agent.actor.weight)
-    writer.add_histogram("rnn_hidden_state/hh", agent.gru.weight_hh)
-    writer.add_histogram("rnn_hidden_state/ih", agent.gru.weight_ih)
-    writer.add_histogram("rnn_hidden_state/grad", agent.gru.weight_hh.grad)
     if args.kle_stop or args.kle_rollback:
         writer.add_scalar("debug/pg_stop_iter", i_epoch_pi, global_step)
 
