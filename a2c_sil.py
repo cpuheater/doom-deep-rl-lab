@@ -10,28 +10,6 @@ import skimage.transform
 
 cv2.ocl.setUseOpenCL(False)
 
-
-class ImageToPyTorch(gym.ObservationWrapper):
-    """
-    Image shape to channels x weight x height
-    """
-
-    def __init__(self, env):
-        super(ImageToPyTorch, self).__init__(env)
-        old_shape = self.observation_space.shape
-        self.observation_space = gym.spaces.Box(
-            low=0,
-            high=255,
-            shape=(old_shape[-1], old_shape[0], old_shape[1]),
-            dtype=np.uint8,
-        )
-
-    def observation(self, observation):
-        return np.transpose(observation, axes=(2, 0, 1))
-
-def wrap_pytorch(env):
-    return ImageToPyTorch(env)
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -48,6 +26,8 @@ import time
 import random
 import os
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnvWrapper
+from sil_module import sil_module
+import copy
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='A2C agent')
@@ -56,7 +36,7 @@ if __name__ == "__main__":
                         help='the name of this experiment')
     parser.add_argument('--gym-id', type=str, default="basic",
                         help='the id of the gym environment')
-    parser.add_argument('--learning-rate', type=float, default=4.5e-4,
+    parser.add_argument('--learning-rate', type=float, default=7e-4,
                         help='the learning rate of the optimizer')
     parser.add_argument('--seed', type=int, default=1,
                         help='seed of the experiment')
@@ -100,6 +80,17 @@ if __name__ == "__main__":
                           help="Toggles advantages normalization")
     parser.add_argument('--anneal-lr', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True,
                           help="Toggle learning rate annealing for policy and value networks")
+
+    #SIL
+    parser.add_argument('--num-update', type=int, default=4,help='')
+    parser.add_argument('--capacity', type=int, default=100000, help='')
+    parser.add_argument('--sil-beta', type=float, default=0.1, help='')
+    parser.add_argument('--sil-alpha', type=float, default=0.6, help='')
+    parser.add_argument('--max-nlogp', type=int, default=5, help='')
+    parser.add_argument('--mini-batch-size', type=int, default=64, help='')
+    parser.add_argument('--clip', type=int, default=1, help='')
+    parser.add_argument('--w_value', type=float, default=0.01, help='')
+
 
     args = parser.parse_args()
     #if not args.seed:
@@ -275,7 +266,7 @@ class Agent(nn.Module):
 
 agent = Agent(envs).to(device)
 optimizer = optim.RMSprop(agent.parameters(), lr=args.learning_rate)
-
+sil = sil_module(agent, args, optimizer)
 if args.anneal_lr:
     # https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/defaults.py#L20
     lr = lambda f: f * args.learning_rate
@@ -317,6 +308,7 @@ for update in range(1, num_updates+1):
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rs, ds, infos = envs.step(action)
         rewards[step], next_done = rs.view(-1), torch.Tensor(ds).to(device)
+        sil.step(obs[step].cpu().numpy(), action.cpu().numpy(), copy.deepcopy(rs.cpu().reshape(-1).numpy()), ds)
 
         for info in infos:
             if 'Episode_Total_Reward' in info.keys():
@@ -367,6 +359,8 @@ for update in range(1, num_updates+1):
     loss.backward()
     nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
     optimizer.step()
+
+    sil.train_sil_model()
 
 
     # TRY NOT TO MODIFY: record rewards for plotting purposes
