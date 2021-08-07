@@ -122,7 +122,7 @@ if __name__ == "__main__":
                         help='automatic tuning of the entropy coefficient.')
 
     # Algorithm specific arguments
-    parser.add_argument('--buffer-size', type=int, default=135000,
+    parser.add_argument('--buffer-size', type=int, default=100000,
                         help='the replay memory buffer size')
     parser.add_argument('--gamma', type=float, default=0.99,
                         help='the discount factor gamma')
@@ -142,9 +142,9 @@ if __name__ == "__main__":
 
     # Additional hyper parameters for tweaks
     ## Separating the learning rate of the policy and value commonly seen: (Original implementation, Denis Yarats)
-    parser.add_argument('--policy-lr', type=float, default=3e-4,
+    parser.add_argument('--policy-lr', type=float, default=2e-4,
                         help='the learning rate of the policy network optimizer')
-    parser.add_argument('--q-lr', type=float, default=3e-4,
+    parser.add_argument('--q-lr', type=float, default=2e-4,
                         help='the learning rate of the Q network network optimizer')
     parser.add_argument('--policy-frequency', type=int, default=1,
                         help='delays the update of the actor, as per the TD3 paper.')
@@ -333,8 +333,11 @@ for global_step in range(1, args.total_timesteps+1):
         action, _ = pg.get_action([obs], device)
     # TRY NOT TO MODIFY: execute the game and log data.
     next_obs, reward, done, _ = env.step(action)
-    print(f"reward {reward} action {action}")
-    #reward = np.sign(reward)
+    #if not done:
+    #    if reward < 0:
+    #        reward = -1
+
+    reward = 100 if reward > 0 else reward
     rb.put((obs, action, reward, next_obs, done))
     episode_reward += reward
     episode_length += 1
