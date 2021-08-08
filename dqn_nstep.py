@@ -24,7 +24,41 @@ import time
 import os
 import random
 
-from utils import ReplayBuffer, stack_frames
+class ReplayBufferNStep(object):
+    def __init__(self, size, n_step, gamma):
+        self._storage = deque(maxlen=size)
+        self._maxsize = size
+        self.n_step_buffer = deque(maxlen=n_step)
+        self.gamma = gamma
+        self.n_step = n_step
+
+    def get_n_step(self):
+        _, _, reward, next_observation, done = self.n_step_buffer[-1]
+        for _, _, r, next_obs, do in reversed(list(self.n_step_buffer)[:-1]):
+            reward = self.gamma * reward * (1 - do) + r
+            mext_observation, done = (next_obs, do) if do else (next_observation, done)
+        return reward, next_observation, done
+
+    def put(self, data):
+        self.n_step_buffer.append(data)
+        if len(self.n_step_buffer) < self.n_step:
+            return
+        reward, next_obs, done = self.get_n_step()
+        obs, action, _, _, _ = self.n_step_buffer[0]
+        self._storage.append([obs, action, reward, next_obs, done])
+
+    def sample(self, batch_size):
+        idxes = np.random.choice(len(self._storage), batch_size, replace=True)
+        obses_t, actions, rewards, obses_tp1, dones = [], [], [], [], []
+        for i in idxes:
+            data = self._storage[i]
+            obs_t, action, reward, obs_tp1, done = data
+            obses_t.append(np.array(obs_t, copy=False))
+            actions.append(np.array(action, copy=False))
+            rewards.append(reward)
+            obses_tp1.append(np.array(obs_tp1, copy=False))
+            dones.append(done)
+        return np.array(obses_t), np.array(actions), np.array(rewards), np.array(obses_tp1), np.array(dones)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='DQN agent')
@@ -67,6 +101,8 @@ if __name__ == "__main__":
                         help="timestep to start learning")
     parser.add_argument('--train-frequency', type=int, default=4,
                         help="the frequency of training")
+    parser.add_argument('--n-step', type=int, default=4,
+                        help="n step")
     args = parser.parse_args()
     #if not args.seed:
     args.seed = int(time.time())
@@ -144,7 +180,7 @@ game = initialize_vizdoom("./scenarios/basic.cfg")
 n = game.get_available_buttons_size()
 actions = [list(a) for a in itertools.product([0, 1], repeat=n)]
 
-rb = ReplayBuffer(args.buffer_size)
+rb = ReplayBufferNStep(args.buffer_size, args.n_step, args.gamma)
 q_network = QNetwork(actions, frames).to(device)
 target_network = QNetwork(actions, frames).to(device)
 target_network.load_state_dict(q_network.state_dict())
@@ -179,7 +215,7 @@ for global_step in range(args.total_timesteps):
         s_obs, s_actions, s_rewards, s_next_obses, s_dones = rb.sample(args.batch_size)
         with torch.no_grad():
             target_max = torch.max(target_network.forward(s_next_obses), dim=1)[0]
-            td_target = torch.Tensor(s_rewards).to(device) + args.gamma * target_max * (
+            td_target = torch.Tensor(s_rewards).to(device) + (args.gamma ** args.n_step) * target_max * (
                     1 - torch.Tensor(s_dones).to(device))
         old_val = q_network.forward(s_obs).gather(1, torch.LongTensor(s_actions).view(-1, 1).to(device)).squeeze()
         loss = loss_fn(td_target, old_val)
