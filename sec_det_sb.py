@@ -91,71 +91,6 @@ class ViZDoomEnv:
     def close(self):
         self.game.close()
 
-import random
-import torch
-import numpy as np
-from collections import namedtuple, deque
-
-
-class ReplayBufferNStep:
-    """Fixed-size buffer to store experience tuples."""
-
-    def __init__(self, buffer_size, batch_size, seed, gamma, n_step=1):
-        """Initialize a ReplayBuffer object.
-        Params
-        ======
-            buffer_size (int): maximum size of buffer
-            batch_size (int): size of each training batch
-            seed (int): random seed
-        """
-        self.device = device
-        self.memory = deque(maxlen=buffer_size)
-        self.batch_size = batch_size
-        self.n_step = n_step
-        self.parallel_env = 1
-        self.n_step_buffer = [deque(maxlen=self.n_step) for i in range(self.parallel_env)]
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
-        self.seed = random.seed(seed)
-        self.gamma = gamma
-        self.iter_ = 0
-
-    def append(self, state, action, reward, next_state, done):
-        """Add a new experience to memory."""
-        if self.iter_ == self.parallel_env:
-            self.iter_ = 0
-        self.n_step_buffer[self.iter_].append((state, action, reward, next_state, done))
-        if len(self.n_step_buffer[self.iter_]) == self.n_step:
-            state, action, reward, next_state, done = self.calc_multistep_return(self.n_step_buffer[self.iter_])
-            e = self.experience(state, action, reward, next_state, done)
-            self.memory.append(e)
-        self.iter_ += 1
-
-    def calc_multistep_return(self, n_step_buffer):
-        Return = 0
-        for idx in range(self.n_step):
-            Return += self.gamma**idx * n_step_buffer[idx][2]
-
-        return n_step_buffer[0][0], n_step_buffer[0][1], Return, n_step_buffer[-1][3], n_step_buffer[-1][4]
-
-
-
-    def sample(self):
-        """Randomly sample a batch of experiences from memory."""
-        experiences = random.sample(self.memory, k=self.batch_size)
-
-        states = torch.from_numpy(np.stack([e.state for e in experiences if e is not None])).float()
-        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float()
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float()
-        next_states = torch.from_numpy(np.stack([e.next_state for e in experiences if e is not None])).float()
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float()
-
-        return (states, actions, rewards, next_states, dones)
-
-    def __len__(self):
-        """Return the current size of internal memory."""
-        return len(self.memory)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='SAC with 2 Q functions, Online updates')
     # Common arguments
@@ -203,8 +138,6 @@ if __name__ == "__main__":
                         help="Entropy regularization coefficient.")
     parser.add_argument('--learning-starts', type=int, default=5e1,
                         help="timestep to start learning")
-    parser.add_argument('--n-step', type=int, default=1,
-                        help="n step")
 
 
     # Additional hyper parameters for tweaks
@@ -226,7 +159,7 @@ if __name__ == "__main__":
     args.seed = int(time.time())
 
 # TRY NOT TO MODIFY: setup the environment
-experiment_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
+experiment_name = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
 writer = SummaryWriter(f"runs/{experiment_name}")
 writer.add_text('hyperparameters', "|param|value|\n|-|-|\n%s" % (
     '\n'.join([f"|{key}|{value}|" for key, value in vars(args).items()])))
@@ -341,39 +274,39 @@ class SoftQNetwork(nn.Module):
 
 
 class ReplayBuffer():
- def __init__(self, buffer_limit):
-     self.buffer = collections.deque(maxlen=buffer_limit)
+    def __init__(self, buffer_limit):
+        self.buffer = collections.deque(maxlen=buffer_limit)
+        self.sb = deque()
 
- def append(self, obs, action, reward, next_obs, done):
-     self.buffer.append((obs, action, reward, next_obs, done))
+    def put(self, transition):
+        if transition[-1]:
+            if transition[2] > 0:
+                self.buffer.append(transition)
+                self.buffer.extend(self.sb)
+            self.sb.clear()
+        else:
+            self.sb.append(transition)
 
- def __len__(self):
-     return len(self.buffer)
+        if len(self.buffer) < 100000:
+            self.buffer.append(transition)
 
- def sample(self, n):
-     mini_batch = random.sample(self.buffer, n)
-     s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst = [], [], [], [], []
+    def sample(self, n):
+        mini_batch = random.sample(self.buffer, n)
+        s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst = [], [], [], [], []
 
-     for transition in mini_batch:
-         s, a, r, s_prime, done_mask = transition
-         s_lst.append(s)
-         a_lst.append(a)
-         r_lst.append(r)
-         s_prime_lst.append(s_prime)
-         done_mask_lst.append(done_mask)
+        for transition in mini_batch:
+            s, a, r, s_prime, done_mask = transition
+            s_lst.append(s)
+            a_lst.append(a)
+            r_lst.append(r)
+            s_prime_lst.append(s_prime)
+            done_mask_lst.append(done_mask)
 
-     return np.array(s_lst), np.array(a_lst), \
-            np.array(r_lst), np.array(s_prime_lst), \
-            np.array(done_mask_lst)
+        return np.array(s_lst), np.array(a_lst), \
+               np.array(r_lst), np.array(s_prime_lst), \
+               np.array(done_mask_lst)
 
-rb=ReplayBuffer(args.buffer_size)
-
-#rb = ReplayBuffer(args.buffer_size,
-#                  args.batch_size,
-#                  args.seed,
-#                  args.gamma,
-#                  n_step=args.n_step)
-
+rb = ReplayBuffer(args.buffer_size)
 pg = Policy(env.action_space.n).to(device)
 qf1 = SoftQNetwork(env.action_space.n).to(device)
 qf2 = SoftQNetwork(env.action_space.n).to(device)
@@ -410,21 +343,25 @@ for global_step in range(1, args.total_timesteps+1):
         action, _ = pg.get_action([obs], device)
     # TRY NOT TO MODIFY: execute the game and log data.
     next_obs, reward, done, _ = env.step(action)
+    #if not done:
+    #    if reward < 0:
+    #        reward = -1
+
     reward = 100 if reward > 0 else reward
-    rb.append(obs, action, reward, next_obs, done)
+    rb.put((obs, action, reward, next_obs, done))
     episode_reward += reward
     episode_length += 1
     obs = np.array(next_obs)
 
     # ALGO LOGIC: training.
-    if len(rb) > args.batch_size and global_step % 4 == 0: # starts update as soon as there is enough data.
+    if len(rb.buffer) > args.batch_size and global_step % 4 == 0: # starts update as soon as there is enough data.
         s_obs, s_actions, s_rewards, s_next_obses, s_dones = rb.sample(args.batch_size)
         with torch.no_grad():
             probs, next_state_log_probs = pg.forward(s_next_obses, device)
             qf1_next_target = qf1_target.forward(s_next_obses, device)
             qf2_next_target = qf2_target.forward(s_next_obses, device)
             min_qf_next_target = (probs * (torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_probs)).sum(-1)
-            next_q_value = torch.Tensor(s_rewards).to(device) + (1 - torch.Tensor(s_dones).to(device)) * (args.gamma ** args.n_step) * min_qf_next_target
+            next_q_value = torch.Tensor(s_rewards).to(device) + (1 - torch.Tensor(s_dones).to(device)) * args.gamma * min_qf_next_target
 
         qf1_a_values = qf1.forward(s_obs,  device)[np.arange(args.batch_size), np.array(s_actions)]
         qf2_a_values = qf2.forward(s_obs,  device)[np.arange(args.batch_size), np.array(s_actions)]
@@ -469,7 +406,7 @@ for global_step in range(1, args.total_timesteps+1):
             #for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
             #    target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
-    if len(rb) > args.batch_size and global_step % 100 == 0:
+    if len(rb.buffer) > args.batch_size and global_step % 100 == 0:
         writer.add_scalar("losses/soft_q_value_1_loss", qf1_loss.item(), global_step)
         writer.add_scalar("losses/soft_q_value_2_loss", qf2_loss.item(), global_step)
         writer.add_scalar("losses/qf_loss", qf_loss.item(), global_step)

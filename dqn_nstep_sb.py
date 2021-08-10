@@ -26,6 +26,7 @@ import random
 
 class ReplayBufferNStep(object):
     def __init__(self, size, n_step, gamma):
+        self._data = deque(maxlen=size)
         self._storage = deque(maxlen=size)
         self._maxsize = size
         self.n_step_buffer = deque(maxlen=n_step)
@@ -47,11 +48,18 @@ class ReplayBufferNStep(object):
         obs, action, _, _, _ = self.n_step_buffer[0]
         self._storage.append([obs, action, reward, next_obs, done])
 
+        if data[-1]:
+            if data[2] > 0:
+                self._data.extend(self._storage)
+            self._storage.clear()
+        #elif len(self._data) < 20000:
+        #    self._data.extend(self._storage)
+
     def sample(self, batch_size):
-        idxes = np.random.choice(len(self._storage), batch_size, replace=True)
+        idxes = np.random.choice(len(self._data), batch_size, replace=True)
         obses_t, actions, rewards, obses_tp1, dones = [], [], [], [], []
         for i in idxes:
-            data = self._storage[i]
+            data = self._data[i]
             obs_t, action, reward, obs_tp1, done = data
             obses_t.append(np.array(obs_t, copy=False))
             actions.append(np.array(action, copy=False))
@@ -81,7 +89,7 @@ if __name__ == "__main__":
                         help="the entity (team) of wandb's project")
 
     # Algorithm specific arguments
-    parser.add_argument('--buffer-size', type=int, default=10000,
+    parser.add_argument('--buffer-size', type=int, default=100000,
                         help='the replay memory buffer size')
     parser.add_argument('--gamma', type=float, default=0.99,
                         help='the discount factor gamma')
@@ -101,7 +109,7 @@ if __name__ == "__main__":
                         help="timestep to start learning")
     parser.add_argument('--train-frequency', type=int, default=4,
                         help="the frequency of training")
-    parser.add_argument('--n-step', type=int, default=8,
+    parser.add_argument('--n-step', type=int, default=4,
                         help="n step")
     args = parser.parse_args()
     #if not args.seed:
