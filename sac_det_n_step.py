@@ -201,9 +201,9 @@ if __name__ == "__main__":
                         help="target smoothing coefficient (default: 0.005)")
     parser.add_argument('--alpha', type=float, default=0.2,
                         help="Entropy regularization coefficient.")
-    parser.add_argument('--learning-starts', type=int, default=5e1,
+    parser.add_argument('--learning-starts', type=int, default=1e1,
                         help="timestep to start learning")
-    parser.add_argument('--n-step', type=int, default=1,
+    parser.add_argument('--n-step', type=int, default=3,
                         help="n step")
 
 
@@ -340,7 +340,7 @@ class SoftQNetwork(nn.Module):
         return self.q_value(x)
 
 
-class ReplayBuffer():
+"""class ReplayBuffer():
  def __init__(self, buffer_limit):
      self.buffer = collections.deque(maxlen=buffer_limit)
 
@@ -364,9 +364,48 @@ class ReplayBuffer():
 
      return np.array(s_lst), np.array(a_lst), \
             np.array(r_lst), np.array(s_prime_lst), \
-            np.array(done_mask_lst)
+            np.array(done_mask_lst)"""
 
-rb=ReplayBuffer(args.buffer_size)
+class ReplayBufferNStep2(object):
+    def __init__(self, size, n_step, gamma):
+        self._storage = deque(maxlen=size)
+        self._maxsize = size
+        self.n_step_buffer = deque(maxlen=n_step)
+        self.gamma = gamma
+        self.n_step = n_step
+
+    def __len__(self):
+        return len(self._storage)
+
+    def get_n_step(self):
+        _, _, reward, next_observation, done = self.n_step_buffer[-1]
+        for _, _, r, next_obs, do in reversed(list(self.n_step_buffer)[:-1]):
+            reward = self.gamma * reward * (1 - do) + r
+            mext_observation, done = (next_obs, do) if do else (next_observation, done)
+        return reward, next_observation, done
+
+    def append(self, obs, action, reward, next_obs, done):
+        self.n_step_buffer.append((obs, action, reward, next_obs, done))
+        if len(self.n_step_buffer) < self.n_step:
+            return
+        reward, next_obs, done = self.get_n_step()
+        obs, action, _, _, _ = self.n_step_buffer[0]
+        self._storage.append([obs, action, reward, next_obs, done])
+
+    def sample(self, batch_size):
+        idxes = np.random.choice(len(self._storage), batch_size, replace=True)
+        obses_t, actions, rewards, obses_tp1, dones = [], [], [], [], []
+        for i in idxes:
+            data = self._storage[i]
+            obs_t, action, reward, obs_tp1, done = data
+            obses_t.append(np.array(obs_t, copy=False))
+            actions.append(np.array(action, copy=False))
+            rewards.append(reward)
+            obses_tp1.append(np.array(obs_tp1, copy=False))
+            dones.append(done)
+        return np.array(obses_t), np.array(actions), np.array(rewards), np.array(obses_tp1), np.array(dones)
+
+rb=ReplayBufferNStep2(args.buffer_size, 4, args.gamma)
 
 #rb = ReplayBuffer(args.buffer_size,
 #                  args.batch_size,
@@ -479,12 +518,11 @@ for global_step in range(1, args.total_timesteps+1):
             writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
     if done:
-        print(f"Episode reward {episode_reward}")
         global_episode += 1 # Outside the loop already means the epsiode is done
         writer.add_scalar("charts/episode_reward", episode_reward, global_step)
         writer.add_scalar("charts/episode_length", episode_length, global_step)
         # Terminal verbosity
-        if global_episode % 10 == 0:
+        if global_episode % 1 == 0:
             print(f"Episode: {global_episode} Step: {global_step}, Ep. Reward: {episode_reward}")
 
         # Reseting what need to be
